@@ -1,0 +1,30 @@
+{
+  "$schema": "https://pi.dev/schemas/models.schema.json",
+  "providers": {
+    "spark": {
+      "name": "DGX Spark (LiteLLM gateway)",
+      "baseUrl": "http://<SPARK_IP>:4000/v1",
+      "apiKey": "$SPARK_LLM_KEY",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "qwen3.8-27b",
+          "name": "Qwen3.8 27B NVFP4 (Spark)",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 262144,
+          "maxTokens": 32768,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    }
+  }
+}

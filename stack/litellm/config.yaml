@@ -1,0 +1,30 @@
+# =============================================================================
+# LiteLLM gateway — single OpenAI-compatible API for the whole organization
+#
+#   model "qwen3.8-27b"    → vLLM :8000        (Qwen3.8-27B NVFP4 + DFlash2)
+#   model "bge-m3"         → Ollama :11434      (embeddings for RAG)
+#
+# Keys come from stack/.env (synced from /etc/spark-llm.env by script 07).
+# Virtual keys per department/user: create in the LiteLLM UI (https://<host>/gateway/ui)
+# or via /key/generate with the master key — see runbook §8.
+# =============================================================================
+model_list:
+  - model_name: qwen3.8-27b
+    litellm_params:
+      model: openai/qwen3.8-27b
+      api_base: http://host.docker.internal:8000/v1
+      api_key: os.environ/VLLM_API_KEY
+
+  - model_name: bge-m3
+    litellm_params:
+      model: ollama/bge-m3
+      api_base: http://host.docker.internal:11434
+
+litellm_settings:
+  drop_params: true          # tolerate provider-specific params (e.g. chat_template_kwargs passthrough)
+  request_timeout: 1800      # long agent runs / 262K contexts
+  telemetry: false
+  num_retries: 1
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

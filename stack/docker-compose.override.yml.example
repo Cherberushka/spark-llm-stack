@@ -1,0 +1,4 @@
+services:
+  open-webui:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

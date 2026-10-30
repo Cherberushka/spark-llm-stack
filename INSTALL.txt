@@ -1,0 +1,126 @@
+════════════════════════════════════════════════════════════════════
+ SPARK LLM STACK — установочный пакет v3.12.6 (2026-10-30)
+ Локальный LLM-сервер для NVIDIA DGX Spark (GB10, 128 ГБ, DGX OS)
+════════════════════════════════════════════════════════════════════
+
+СОСТАВ СТЕКА
+  • Qwen3.8-27B — единственная чат-модель. Два официальных пути NVIDIA:
+      A (по умолчанию, без NGC, работает из РФ): llama.cpp GGUF
+        unsloth UD-Q4_K_XL + DFlash2 + mmproj → ~25–30 tok/s, ctx 160K
+      B (точный рецепт vLLM NVFP4: 37,3 tok/s, 262K, 8 польз.) — требует
+        NGC-образ; из РФ: офлайн-импорт docker save/load (runbook Прил. А.1)
+    ВАЖНО: Docker Hub vllm/vllm-openai НЕ совместим с флагами рецепта
+    (патчи NVIDIA — открытые PR, не upstream).
+  • bge-m3 — эмбеддинги для RAG (Ollama)
+  • LiteLLM :4000 — единый OpenAI-совместимый API (ключи отделов, логи)
+  • Open WebUI — веб-чат + админ-панель + Knowledge/RAG
+  • Caddy :443 — HTTPS-дверь, /ops — дашборд состояния
+  • Pi-агент — подключение рабочих станций разработчиков
+  • Кодовая линия P4 — агенты правят репозиторий под контролем человека:
+      scripts/16-setup-code-line.sh (пользователь agent-dev, роль-карточки,
+      раннер Pi) + шаблоны оркестратора code-fix / code-review / code-feature
+      (implementer → qa → reviewer → гейт человека). Деплой: INSTALL-RUNBOOK §12c
+      v3.12.1: конфиг Pi под 1.4.0 — headless-ключ командой (без SPARK_LLM_KEY)
+      и --model spark/qwen3.8-27b (слэш; двоеточие в Pi 1.x = уровень thinking)
+      v3.12.2: скиллы Pi ставятся воркеру agent-dev офлайн (шаг 2b скрипта 16)
+      v3.12.3: Pi не переустанавливается на каждом запуске (поиск бинаря по путям,
+               OFFLINE_PI=1, внятный стоп без сети)
+      v3.12.4: смоук Pi из читаемого cwd + --no-session (лечение «Stored session
+               working directory does not exist»)
+      v3.12.5: диф-артефакт гейта — git от владельца репозитория (оркестратор root,
+               иначе «dubious ownership» и пустой диф), база дифа = ревизия на
+               старте задачи, task-<id>-<role>.diff пишется всегда, новые
+               неотслеживаемые файлы видны гейту
+      v3.12.6: OPS-CARD.md — ежедневная карта эксплуатации (утренний чек, цикл
+               задачи P4, решение гейта, обновление пакета, аварии, инварианты);
+               исправлено имя юнита rag-svc в STATE.md (было spark-rag-svc);
+               доступ к борду задач — loopback + SSH-туннель (роута в Caddy нет)
+
+ТРЕБОВАНИЯ
+  • NVIDIA DGX Spark, 128 ГБ, DGX OS (Ubuntu 24.04, aarch64),
+    драйвер 580.x, Docker + NVIDIA Container Toolkit (предустановлены)
+  • Свободный диск: ≥ 90 ГБ (образ vLLM ~25 ГБ + веса ~18 ГБ + веб ~10 ГБ)
+  • Сеть: github.com, hf-mirror.com (зеркало HF для РФ), ollama.com, ghcr.io,
+    Docker Hub. NGC (nvcr.io) для пути A НЕ требуется.
+  • Подсети организации (доступ к API): по умолчанию 192.168.8.0–192.168.11.255
+    (меняется: LAN_NETS="..." — см. INSTALL-RUNBOOK.md §4)
+
+УСТАНОВКА (один запуск, ~1–1,5 ч с закачками)
+  1. Скопируйте этот каталог на DGX Spark (scp/флешка) и распакуйте:
+       unzip spark-llm-stack-installer-v3.12.6.zip && cd spark-llm-stack
+     (все команды ниже запускаются через "bash …", права +x не критичны;
+      если распаковывали не через unzip — восстановите их: chmod +x scripts/*.sh)
+  2. sudo bash scripts/setup-wizard.sh
+     Визард проведёт 6 стадий с подтверждениями:
+       1 preflight → 2 подготовка ОС/файрвол → 3 Ollama+bge-m3
+       → 4 Qwen3.8-27B: выбор движка (llama.cpp default / vLLM NGC)
+       → 5 веб-слой → 6 проверка
+     Стадии возобновляемы: при обрыве просто запустите визард повторно.
+
+ПОСЛЕ УСТАНОВКИ
+  • https://<IP-Spark>/        — чат + админка
+    ПЕРВЫЙ зарегистрированный пользователь становится АДМИНИСТРАТОРОМ.
+    Затем закройте регистрацию: ENABLE_SIGNUP=false в stack/.env
+    → cd stack && docker compose up -d
+  • https://<IP-Spark>/ops     — дашборд состояния
+  • http://<IP-Spark>:4000/v1  — единый API (model: qwen3.8-27b, bge-m3)
+    ключ: sudo grep LITELLM_MASTER_KEY /etc/spark-llm.env
+  • Pi на рабочей станции: bash scripts/06-setup-pi.sh
+    → pi --model spark/qwen3.8-27b
+  • Скиллы Pi (курируемые 16 шт.): bash scripts/10-install-pi-skills.sh
+    Без интернета: OFFLINE=1 bash scripts/10-install-pi-skills.sh
+
+  База знаний организации (rag-svc v2 — гибрид BM25+семантика, фильтры, MCP):
+  • установить/обновить сервис:  sudo bash scripts/12-setup-rag-svc.sh
+  • мигрировать корпус v1 → v2:   sudo bash scripts/17-rag-v2-migrate.sh --dry-run
+                                 sudo bash scripts/17-rag-v2-migrate.sh   (откат: --rollback)
+  • Qdrant — включить ДО массового импорта (решение 28.10.2026, RAG-SCALE-PLAN §4.2):
+        sudo bash scripts/18-vector-store-qdrant.sh        (откат: --rollback)
+        curl -s localhost:8502/health | jq -c .            # backend = "qdrant"
+  • mass-импорт клин. рекомендаций:
+        sudo mkdir -p /srv/kb/clinrec/<специальность>   # специальность = имя каталога
+        sudo bash scripts/19-import-clinrec.sh --dry-run   # ПРОГНОЗ: часы OCR, место
+        sudo bash scripts/19-import-clinrec.sh --limit 20  # пилот, проверить глазами
+        sudo bash scripts/19-import-clinrec.sh --ocr never # основной прогон
+        sudo bash scripts/19-import-clinrec.sh --ocr auto --night-only  # сканы ночью
+  • состояние корпуса:  curl -s localhost:8502/stats | jq '{chunks,docs,recommendation}'
+  • синхронизация Qdrant из SQLite-зеркала без пере-эмбеддинга:
+        curl -s -X POST localhost:8502/reindex -H 'Content-Type: application/json' \
+             -d '{"use_existing_vectors":true}' | jq
+  • гигиена логов (dry-run, потом --apply): sudo bash scripts/20-log-hygiene.sh
+  • скиллы в DeepSeek Harness (dsh): bash scripts/21-export-dsh-skills.sh → zip + sha256,
+    установка на станции install.sh / install.ps1; состав — SKILLS-INVENTORY.md,
+    механика и грабли — agents/dsh/DEEPSEEK-HARNESS-GUIDE.md §7
+  • снимок состояния стека: STATE.md (читать первым после перезапуска работ)
+  • самопроверка (без Ollama/GPU, ~5 с):
+        /opt/rag-venv/bin/python research/test-rag-svc-v2.py --backend both
+        /opt/rag-venv/bin/python research/test-mcp-e2e.py
+  • обоснование порогов и замеры: RAG-SCALE-PLAN.md; операции: KNOWLEDGE-WIKI.md §5–6
+    (офлайн-копии всех скиллов лежат в vendor-skills/ внутри пакета).
+    Сетевой аудит каждого скилла — SKILLS-APPLIED.md §3: в рантайме интернет
+    нужен только опциональным find-skills и taste-skill/assets.mjs (не ставим/
+    не используем на закрытом периметре); остальное работает локально.
+
+ПОРЯДОК ЧТЕНИЯ ДОКУМЕНТАЦИИ
+  INSTALL-RUNBOOK.md — полная инструкция (архитектура, стадии, API,
+                       thinking-режимы, админка, эксплуатация, безопасность,
+                       troubleshooting, fallback llama.cpp)
+  RAG-GUIDE.md       — RAG для клиники с нуля: какие документы загружать,
+                       регламент обновления клинических рекомендаций,
+                       контроль качества, граница RAG↔БД
+  MODEL-ANALYSIS.md  — обоснование выбора модели (бенчмарки, измерения)
+  agents/pi/         — настройка Pi-агента
+  research/nvidia-recipes/ — копии официальных рецептов/измерений NVIDIA
+
+ПРОВЕРКА ЗДОРОВЬЯ (в любой момент)
+  sudo bash scripts/05-verify.sh
+  (6 групп тестов: эмбеддинги, текст, зрение 64×64, проба >2048 токенов,
+   шлюз, веб-дверь)
+
+КЛЮЧИ И СЕКРЕТЫ
+  Генерируются при установке в /etc/spark-llm.env (права 600):
+  VLLM_API_KEY, LITELLM_MASTER_KEY. В пакет НЕ входят, в git не коммитить.
+
+ЦЕЛОСТНОСТЬ ПАКЕТА
+  См. файл SHA256SUMS.txt рядом с архивом.
+════════════════════════════════════════════════════════════════════

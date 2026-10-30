@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tasks — агентная сеть Spark</title>
+<style>
+  :root{--paper:#fbfbf8;--card:#fff;--ink:#1c1e1a;--muted:#6f7468;--rule:#e3e5dd;--hue:#5e9300;--bad:#b3402f;--warn:#9a7222;--mono:ui-monospace,Menlo,Consolas,monospace}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--paper);padding:0 20px 40px}
+  .wrap{max-width:1180px;margin:0 auto}
+  header{display:flex;align-items:center;gap:12px;padding:14px 2px;border-bottom:1px solid var(--rule);margin-bottom:16px}
+  .title{font-size:15px;font-weight:650}.scope{font-size:12px;color:var(--muted)}
+  header .sp{flex:1}
+  .keybar{display:flex;gap:8px;align-items:center}
+  .keybar input{font:12.5px var(--mono);padding:6px 8px;border:1px solid var(--rule);border-radius:4px;min-width:220px;background:var(--paper)}
+  .keybar button,.btn{font:12.5px/1 system-ui;padding:7px 12px;border:1px solid var(--rule);border-radius:4px;background:var(--card);cursor:pointer;font-weight:600}
+  .btn.ok{border-color:var(--hue);color:var(--hue)} .btn.bad{border-color:var(--bad);color:var(--bad)}
+  table{width:100%;border-collapse:collapse;font-size:13px;background:var(--card);border:1px solid var(--rule);border-radius:6px;overflow:hidden}
+  th{text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--rule);padding:8px}
+  td{border-bottom:1px solid var(--rule);padding:8px;vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  .mono{font-family:var(--mono);font-size:12.5px}
+  .st{font-weight:600}.st.done{color:var(--hue)}.st.failed{color:var(--bad)}.st.awaiting_approval,.st.running{color:var(--warn)}
+  .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:16px;margin-top:16px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  section{background:var(--card);border:1px solid var(--rule);border-radius:6px;padding:14px 16px}
+  h2{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
+  li{margin:4px 0 4px 16px}
+  .ev{font-family:var(--mono);font-size:12px;color:var(--muted)}
+  footer{font-size:12px;color:var(--muted);margin-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div><div class="title">Tasks — агентная сеть</div><div class="scope">DGX Spark · оркестратор :8500 · роли и gates по AGENT-NETWORK-PLAN</div></div>
+  <div class="sp"></div>
+  <div class="keybar"><input id="okey" type="password" placeholder="X-Orch-Key (из /etc/orchestrator.env)"><button id="savek">OK</button></div>
+</header>
+
+<section>
+  <h2>Загрузить файл в kb-inbox (+ задача)</h2>
+  <div id="uploadbox" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <input type="file" id="f" style="font:12.5px var(--mono)">
+    <label style="font-size:12px;color:var(--muted)"><input type="checkbox" id="mk" checked> создать задачу doc-convert</label>
+    <button class="btn" id="up">Загрузить</button>
+    <span id="upres" class="mono" style="font-size:12px"></span>
+  </div>
+</section>
+
+<section>
+  <h2>Задачи</h2>
+  <table><thead><tr><th>#</th><th>Шаблон</th><th>Заказчик / группа</th><th>Статус</th><th>Токены</th><th>Обновлено</th></tr></thead>
+  <tbody id="tb"><tr><td colspan="6">загрузка…</td></tr></tbody></table>
+</section>
+
+<div class="grid">
+  <section><h2>Шаги выбранной задачи</h2><ul id="steps"><li>—</li></ul></section>
+  <section><h2>События</h2><ul id="events"><li>—</li></ul></section>
+</div>
+<footer>Создание задач: POST /api/tasks (X-Orch-Key) или Open WebUI Tool «create_task» (P2). Gates решаются кнопками в блоке «Шаги».</footer>
+</div>
+<script>
+"use strict";
+const K=()=>localStorage.getItem("orchKey")||"";
+document.getElementById("savek").onclick=()=>{localStorage.setItem("orchKey",document.getElementById("okey").value.trim());document.getElementById("okey").value="";refresh();};
+let SEL=null;
+async function api(p,o={}){const r=await fetch(p,{...o,headers:{"X-Orch-Key":K(),"Content-Type":"application/json",...(o.headers||{})}});return r.json();}
+async function refresh(){
+  const ts=await api("api/tasks");
+  document.getElementById("tb").innerHTML=(ts||[]).slice(0,60).map(t=>
+    `<tr data-id="${t.id}" style="cursor:pointer"><td class="mono">${t.id}</td><td>${t.template||"<i>freeform</i>"}</td><td>${t.requester} / ${t.grp}</td><td class="st ${t.status}">${t.status}</td><td class="mono">${t.tokens_used}/${t.token_budget}</td><td class="mono">${String(t.updated_at).slice(0,19)}</td></tr>`).join("")||"<tr><td colspan=6>нет задач</td></tr>";
+  document.querySelectorAll("#tb tr[data-id]").forEach(tr=>tr.onclick=()=>{SEL=+tr.dataset.id;detail();});
+  if(SEL)detail();
+}
+async function detail(){
+  const d=await api("api/tasks/"+SEL);
+  document.getElementById("steps").innerHTML=(d.steps||[]).map(s=>
+    `<li><b>${s.idx}·${s.role}</b> <span class="st ${s.status}">${s.status}</span> ${s.kind==="gate"?gateBtns(s):""}<div class="ev">${(s.output||"").slice(0,160)}</div></li>`).join("")||"<li>—</li>";
+  document.getElementById("events").innerHTML=(d.events||[]).slice(-40).reverse().map(e=>
+    `<li class="ev">${String(e.ts).slice(11,19)} ${e.level}: ${e.message}${e.artifact?" → "+e.artifact:""}</li>`).join("")||"<li>—</li>";
+}
+function gateBtns(s){return s.status==="awaiting_approval"?`<button class="btn ok" onclick="decide(${s.id},'approve')">approve</button> <button class="btn bad" onclick="decide(${s.id},'reject')">reject</button>`:"";}
+window.decide=async(sid,d)=>{const c=prompt("Комментарий к решению:","")||"";await api(`api/tasks/${SEL}/steps/${sid}/decision`,{method:"POST",body:JSON.stringify({decision:d,comment:c})});detail();refresh();};
+document.getElementById("up").onclick=async()=>{
+  const el=document.getElementById("f"); const res=document.getElementById("upres");
+  if(!el.files.length){res.textContent="выберите файл";return;}
+  const fd=new FormData(); fd.append("file",el.files[0]);
+  const mk=document.getElementById("mk").checked?"doc-convert":"";
+  res.textContent="загрузка…";
+  try{
+    const r=await fetch("api/inbox?make_task="+encodeURIComponent(mk),{method:"POST",headers:{"X-Orch-Key":K()},body:fd});
+    const j=await r.json(); res.textContent=r.ok?("сохранено: "+j.saved+(j.task_id?" · задача #"+j.task_id:"")):("ошибка: "+(j.detail||r.status));
+    if(r.ok)refresh();
+  }catch(e){res.textContent="ошибка сети: "+e;}
+};
+refresh();setInterval(refresh,6000);
+</script>
+</body>
+</html>

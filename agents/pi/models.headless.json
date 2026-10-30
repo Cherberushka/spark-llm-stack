@@ -1,0 +1,23 @@
+{
+  "$schema": "https://pi.dev/schemas/models.schema.json",
+  "//": "Headless-конфиг Pi для unix-пользователя agent-dev (кодовая линия P4). Ставит scripts/16-setup-code-line.sh в /home/agent-dev/.pi/agent/models.json. Отличие от models.json (рабочие станции): ключ берётся КОМАНДОЙ из файла, а не из переменной окружения — иначе Pi в неинтерактивной/интерактивной сессии без SPARK_LLM_KEY считает провайдер неавторизованным и печатает 'No models available'.",
+  "providers": {
+    "spark": {
+      "name": "DGX Spark (LiteLLM gateway)",
+      "baseUrl": "http://<SPARK_IP>:4000/v1",
+      "apiKey": "!cat <KEY_FILE>",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "qwen3.8-27b",
+          "name": "Qwen3.8 27B NVFP4 (Spark)",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 262144,
+          "maxTokens": 32768,
+          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+        }
+      ]
+    }
+  }
+}

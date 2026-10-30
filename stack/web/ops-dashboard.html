@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spark Ops — DGX Spark LLM stack</title>
+<!--
+  Ops dashboard. Served by Caddy at https://<host>/ops
+  Same-origin APIs: /gateway/* (LiteLLM), /vllm/*, /ollama/*
+  Design follows taste-skill app-screen rules: flat surfaces, 1px rules, colour
+  on data only, KPIs as type, right-aligned numbers, honest missing states.
+  No external resources — works offline on the LAN.
+-->
+<style>
+  :root{
+    --paper:#fbfbf8; --card:#ffffff; --ink:#1c1e1a; --muted:#6f7468; --rule:#e3e5dd;
+    --hue:#5e9300; --hue-bright:#76b900; --bad:#b3402f; --warn:#9a7222;
+    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--paper)}
+  body{font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;color:var(--ink);background:var(--paper);padding:0 20px 40px}
+  .wrap{max-width:1240px;margin:0 auto}
+  header{display:flex;align-items:center;gap:14px;padding:14px 2px;border-bottom:1px solid var(--rule);margin-bottom:18px}
+  .mark{width:30px;height:30px;flex:0 0 30px}
+  .title{font-size:15px;font-weight:650;letter-spacing:.02em}
+  .scope{font-size:12px;color:var(--muted)}
+  header .spacer{flex:1}
+  .updated{font-size:12px;color:var(--muted);font-family:var(--mono)}
+  .chat-link{font-size:13px;font-weight:600;color:var(--ink);text-decoration:none;border:1px solid var(--rule);border-radius:4px;padding:7px 14px;background:var(--card)}
+  .chat-link:hover{border-color:var(--hue)}
+  .chat-link .arr{color:var(--hue)}
+  section{background:var(--card);border:1px solid var(--rule);border-radius:6px;padding:16px 18px;margin-bottom:16px}
+  h2{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:12px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:900px){.grid2{grid-template-columns:1fr}}
+  .engine{display:flex;align-items:baseline;gap:10px;padding:9px 0;border-top:1px solid var(--rule)}
+  .engine:first-of-type{border-top:0}
+  .dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px;align-self:center;background:#c9cbc3}
+  .dot.ok{background:var(--hue-bright)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)}
+  .engine .name{font-weight:600;font-size:14px;min-width:170px}
+  .engine .model{font-family:var(--mono);font-size:12.5px}
+  .engine .state{margin-left:auto;font-size:12px;color:var(--muted);white-space:nowrap}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr)}
+  .kpi{padding:4px 18px;border-left:1px solid var(--rule)}
+  .kpi:first-child{border-left:0;padding-left:0}
+  .kpi .lab{font-size:11.5px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin-bottom:4px}
+  .kpi .val{font-size:24px;font-weight:650;font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .kpi .val small{font-size:12px;font-weight:400;color:var(--muted);margin-left:3px}
+  .kpi .sub{font-size:12px;color:var(--muted);margin-top:2px}
+  @media (max-width:900px){.kpis{grid-template-columns:1fr 1fr;row-gap:16px}}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid var(--rule);padding:6px 8px 6px 0}
+  td{border-bottom:1px solid var(--rule);padding:8px 8px 8px 0;vertical-align:baseline}
+  tr:last-child td{border-bottom:0}
+  th.num,td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;padding-right:0}
+  .mono{font-family:var(--mono);font-size:12.5px}
+  .dash{color:#b6b9b0}
+  .st-ok{color:var(--hue);font-weight:600} .st-warn{color:var(--warn);font-weight:600} .st-bad{color:var(--bad);font-weight:600}
+  .keybar{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+  .keybar input{font:12.5px var(--mono);padding:6px 8px;border:1px solid var(--rule);border-radius:4px;min-width:260px;background:var(--paper);color:var(--ink)}
+  .keybar button{font:12.5px/1 inherit;padding:7px 12px;border:1px solid var(--rule);border-radius:4px;background:var(--card);cursor:pointer;font-weight:600}
+  .keybar button:hover{border-color:var(--hue)}
+  .keybar .hint{font-size:12px;color:var(--muted)}
+  footer{font-size:12px;color:var(--muted);padding:4px 2px}
+  footer code{font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="1" y="1" width="30" height="30" rx="6" fill="#1c1e1a"/>
+      <path d="M17.6 5 9 18.2h5.1L13 27l9.4-13.6h-5.6z" fill="#76b900"/>
+    </svg>
+    <div>
+      <div class="title">Spark Ops</div>
+      <div class="scope">DGX Spark · GB10 · 128 GB unified · Qwen3.8-27B NVFP4 on vLLM (NVIDIA recipe)</div>
+    </div>
+    <div class="spacer"></div>
+    <span class="updated" id="updated">—</span>
+    <a class="chat-link" href="/">Open chat <span class="arr">↗</span></a>
+  </header>
+
+  <section>
+    <h2>Serving now — is the stack up?</h2>
+    <div id="engines">
+      <div class="engine"><span class="dot"></span><span class="name">vLLM :8000</span><span class="model">qwen3.8-27b · NVFP4 + DFlash2 · 262K ctx</span><span class="state">checking…</span></div>
+      <div class="engine"><span class="dot"></span><span class="name">Ollama :11434</span><span class="model">bge-m3 · embeddings for RAG</span><span class="state">checking…</span></div>
+      <div class="engine"><span class="dot"></span><span class="name">LiteLLM :4000</span><span class="model">gateway — one API for the org</span><span class="state">checking…</span></div>
+    </div>
+    <div class="keybar" id="keybar" hidden>
+      <span class="hint">vLLM metrics need its API key (<code>VLLM_API_KEY</code> from <code>/etc/spark-llm.env</code>). Stored in this browser only:</span>
+      <input type="password" id="vllmkey" placeholder="VLLM_API_KEY" autocomplete="off">
+      <button id="savekey">Save</button>
+    </div>
+  </section>
+
+  <div class="grid2">
+    <section>
+      <h2>Qwen3.8-27B — vLLM (main engine)</h2>
+      <div class="kpis">
+        <div class="kpi"><div class="lab">Running</div><div class="val" id="v-run"><span class="dash">—</span></div><div class="sub">requests now / waiting</div></div>
+        <div class="kpi"><div class="lab">KV cache</div><div class="val" id="v-kv"><span class="dash">—</span></div><div class="sub">gpu blocks used</div></div>
+        <div class="kpi"><div class="lab">Generated</div><div class="val" id="v-gen"><span class="dash">—</span></div><div class="sub">tokens since start</div></div>
+        <div class="kpi"><div class="lab">Prompted</div><div class="val" id="v-prompt"><span class="dash">—</span></div><div class="sub">tokens processed</div></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>RAG &amp; gateway</h2>
+      <div class="kpis">
+        <div class="kpi"><div class="lab">Gateway</div><div class="val" id="g-st" style="font-size:16px"><span class="dash">—</span></div><div class="sub">/gateway/v1 · key per department</div></div>
+        <div class="kpi"><div class="lab">Embedder</div><div class="val" id="e-st" style="font-size:16px"><span class="dash">—</span></div><div class="sub">bge-m3 · RU+EN</div></div>
+        <div class="kpi"><div class="lab">Ollama</div><div class="val" id="o-ver" style="font-size:16px"><span class="dash">—</span></div><div class="sub">version</div></div>
+        <div class="kpi"><div class="lab">vLLM</div><div class="val" id="v-ver" style="font-size:16px"><span class="dash">—</span></div><div class="sub">version</div></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="grid2">
+    <section>
+      <h2>Gateway models — what the org can call</h2>
+      <table>
+        <thead><tr><th>Model name</th><th>Engine</th><th>Role</th><th>Status</th></tr></thead>
+        <tbody id="modeltbl"><tr><td colspan="4" class="dash">reading…</td></tr></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Components</h2>
+      <table>
+        <thead><tr><th>Component</th><th>Version</th><th>Endpoint</th><th>Status</th></tr></thead>
+        <tbody id="enginetbl"><tr><td colspan="4" class="dash">reading…</td></tr></tbody>
+      </table>
+    </section>
+  </div>
+
+  <footer>
+    Keys: <code>sudo cat /etc/spark-llm.env</code> · Logs: <code>docker logs vllm-qwen38</code>, <code>journalctl -u ollama -f</code>, <code>docker compose logs -f</code> (in stack/) ·
+    Chat &amp; admin: <code>/</code> · Unified API: <code>/gateway/v1</code> · Polls every 5 s, same-origin via Caddy.
+  </footer>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const dash = '<span class="dash">—</span>';
+
+async function getText(path, opts = {}, timeout = 4000) {
+  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), timeout);
+  try { const r = await fetch(path, { ...opts, signal: ctl.signal });
+        return { status: r.status, data: await r.text() }; }
+  catch (e) { return { status: 0, data: null }; }
+  finally { clearTimeout(t); }
+}
+const fmtInt = (n) => (n == null || isNaN(n)) ? dash : Number(n).toLocaleString("en-US");
+const setVal = (id, html) => { $(id).innerHTML = html; };
+function engineRow(i, dotClass, stateHtml) {
+  const rows = $("engines").querySelectorAll(".engine");
+  if (!rows[i]) return;
+  rows[i].querySelector(".dot").className = "dot " + dotClass;
+  rows[i].querySelector(".state").innerHTML = stateHtml;
+}
+function metric(text, name) {
+  if (!text) return null;
+  const re = new RegExp("^" + name.replace(/[:.]/g, "\\$&") + "(?:\\{[^}]*\\})?\\s+(\\S+)", "m");
+  const m = text.match(re); return m ? parseFloat(m[1]) : null;
+}
+const hdr = () => {
+  const k = localStorage.getItem("vllmKey") || "";
+  return k ? { headers: { "Authorization": "Bearer " + k } } : {};
+};
+let keyShown = false;
+function needKey() { $("keybar").hidden = false; keyShown = true; }
+function keyOk() { if (keyShown) { $("keybar").hidden = true; keyShown = false; } }
+
+/* ── vLLM (Qwen3.8-27B) ─────────────────────────────────── */
+async function pollVllm() {
+  const H = hdr();
+  const h = await getText("/vllm/health", H);
+  if (h.status === 0) {
+    engineRow(0, "bad", '<span class="st-bad">down</span> — docker logs vllm-qwen38');
+    ["v-run","v-kv","v-gen","v-prompt"].forEach(id => setVal(id, dash));
+    return { status: "down", version: null };
+  }
+  if (h.status === 401 || h.status === 403) { engineRow(0, "warn", '<span class="st-warn">needs key</span>'); needKey(); return { status: "unauthorized", version: null }; }
+  const loading = h.status === 503;
+  engineRow(0, loading ? "warn" : "ok", loading ? '<span class="st-warn">loading model…</span>' : '<span class="st-ok">serving</span> · qwen3.8-27b');
+  keyOk();
+
+  const m = await getText("/vllm/metrics", H); const mt = m.data || "";
+  const run = metric(mt, "vllm:num_requests_running");
+  const wait = metric(mt, "vllm:num_requests_waiting");
+  setVal("v-run", (run != null) ? `${run} / ${wait ?? 0}` : dash);
+  const kv = metric(mt, "vllm:gpu_cache_usage_perc");
+  setVal("v-kv", kv != null ? (kv * 100).toFixed(0) + "<small>%</small>" : dash);
+  setVal("v-gen", fmtInt(metric(mt, "vllm:generation_tokens_total")));
+  setVal("v-prompt", fmtInt(metric(mt, "vllm:prompt_tokens_total")));
+
+  const v = await getText("/vllm/version", H, 2500);
+  let ver = null;
+  if (v.status === 200 && v.data) { try { ver = JSON.parse(v.data).version || v.data.trim().slice(0,18); } catch(e) { ver = v.data.trim().slice(0,18); } }
+  setVal("v-ver", ver || dash);
+  return { status: loading ? "loading" : "ok", version: ver };
+}
+
+/* ── Ollama (embeddings) ────────────────────────────────── */
+async function pollOllama() {
+  const r = await getText("/ollama/api/version");
+  if (r.status === 200) {
+    engineRow(1, "ok", '<span class="st-ok">serving</span> · bge-m3 embeddings');
+    let ver = null; try { ver = "v" + JSON.parse(r.data).version; } catch(e) {}
+    setVal("o-ver", ver || dash);
+    setVal("e-st", '<span class="st-ok">bge-m3</span>');
+    return { status: "ok", version: ver };
+  }
+  engineRow(1, "bad", '<span class="st-bad">down</span> — systemctl status ollama');
+  setVal("o-ver", dash); setVal("e-st", '<span class="st-bad">down</span>');
+  return { status: "down", version: null };
+}
+
+/* ── LiteLLM gateway ────────────────────────────────────── */
+async function pollGateway() {
+  const r = await getText("/gateway/health/liveliness");
+  if (r.status === 200) {
+    engineRow(2, "ok", '<span class="st-ok">routing</span> · /gateway/v1');
+    setVal("g-st", '<span class="st-ok">routing</span>');
+    return { status: "ok" };
+  }
+  engineRow(2, "bad", '<span class="st-bad">down</span> — docker logs spark-litellm');
+  setVal("g-st", '<span class="st-bad">down</span>');
+  return { status: "down" };
+}
+
+/* ── tables ─────────────────────────────────────────────── */
+const st = (s) => s === "ok" ? '<span class="st-ok">up</span>'
+  : s === "down" ? '<span class="st-bad">down</span>'
+  : s === "unauthorized" ? '<span class="st-warn">no key</span>'
+  : s === "loading" ? '<span class="st-warn">loading</span>'
+  : '<span class="dash">off</span>';
+
+function renderTables(v, o, g) {
+  $("modeltbl").innerHTML = `
+    <tr><td class="mono">qwen3.8-27b</td><td>vLLM NVFP4</td><td>код · документы · отчёты · зрение · tools</td><td>${st(v.status)}</td></tr>
+    <tr><td class="mono">bge-m3</td><td>Ollama</td><td>эмбеддинги RAG (RU+EN)</td><td>${st(o.status)}</td></tr>`;
+  $("enginetbl").innerHTML = `
+    <tr><td>vLLM (main engine)</td><td class="mono">${v.version || "—"}</td><td class="mono">/vllm · :8000</td><td>${st(v.status)}</td></tr>
+    <tr><td>Ollama (embeddings)</td><td class="mono">${o.version || "—"}</td><td class="mono">/ollama · :11434</td><td>${st(o.status)}</td></tr>
+    <tr><td>LiteLLM (gateway)</td><td class="mono">—</td><td class="mono">/gateway · :4000</td><td>${st(g.status)}</td></tr>
+    <tr><td>Open WebUI</td><td class="mono">—</td><td class="mono">/ (this origin)</td><td><span class="st-ok">up</span></td></tr>`;
+}
+
+$("savekey").addEventListener("click", () => {
+  const v = $("vllmkey").value.trim();
+  if (v) localStorage.setItem("vllmKey", v);
+  $("vllmkey").value = "";
+  refresh();
+});
+
+async function refresh() {
+  const [v, o, g] = await Promise.all([pollVllm(), pollOllama(), pollGateway()]);
+  renderTables(v, o, g);
+  $("updated").textContent = "updated " + new Date().toLocaleTimeString("en-GB");
+}
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
